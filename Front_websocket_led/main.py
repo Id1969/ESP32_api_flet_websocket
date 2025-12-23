@@ -16,34 +16,9 @@ ARQUITECTURA
         │  (Flet UI)     │        │   (FastAPI /ws)      │        │ (WS/WSS client)│
         └───────────────┘        └──────────────────────┘        └───────────────┘
 
-PROTOCOLO JSON (VERSIÓN LIMPIA Y ESCALABLE)
-------------------------------------------
-1) Registro del frontend (frontend -> servidor)
-    { "type": "register", "role": "frontend" }
-
-2) Lista de ESP32 conectados (servidor -> frontend)
-    { "type": "esp32_list", "items": ["esp32_01", "esp32_02"] }
-
-3) Pedir estado al conectar o al seleccionar ESP32 (frontend -> servidor)
-    { "type": "get_state", "to": "esp32_01" }
-
-4) Enviar comando al ESP32 destino (frontend -> servidor -> ESP32)
-    { "type": "command", "to": "esp32_01", "device": "relay", "id": 0, "action": "on" }
-    { "type": "command", "to": "esp32_01", "device": "relay", "id": 0, "action": "off" }
-
-5) Estado (ESP32 -> servidor -> frontend(s))
-    { "type": "state", "from": "esp32_01", "device": "relay", "id": 0, "state": "on" }
-    { "type": "state", "from": "esp32_01", "device": "relay", "id": 0, "state": "off" }
-
-6) Keep-alive
-    - el servidor puede mandar { "type": "ping" } al frontend (lo ignoramos)
-    - el ESP32 manda ping al servidor y recibe pong (no es cosa del frontend)
-
-NOTAS
------
-- Este front está preparado para múltiples ESP32. Se elige el destino con un Dropdown.
-- Si hay varios frontends conectados, todos recibirán los "state" y se sincronizan.
-- Se intenta reconectar automáticamente si cae la conexión WS.
+PROTOCOLO JSON
+--------------
+(ver README del proyecto)
 
 ===========================================================================================
 """
@@ -96,9 +71,9 @@ class WebSocketClient:
                 await asyncio.sleep(2)
 
     async def _connect_once(self):
-        print(f"{datetime.now()} 🔌 Conectando a {WEBSOCKET_URL}")
+        # print(f"{datetime.now()} 🔌 Conectando a {WEBSOCKET_URL}")
         self.websocket = await websockets.connect(WEBSOCKET_URL)
-        print(f"{datetime.now()} ✅ Conectado")
+        # print(f"{datetime.now()} ✅ Conectado")
 
         await self.send_json({"type": "register", "role": "frontend"})
         await self.listen_loop()
@@ -108,7 +83,7 @@ class WebSocketClient:
         try:
             while True:
                 raw = await self.websocket.recv()
-                print(f"{datetime.now()} 📩 {raw}")
+                # print(f"{datetime.now()} 📩 {raw}")
                 data = json.loads(raw)
                 if isinstance(data, dict):
                     self.ui_callback(data)
@@ -119,7 +94,13 @@ class WebSocketClient:
         if not self.websocket:
             return
         await self.websocket.send(json.dumps(payload))
-        print(f"{datetime.now()} 📤 {payload}")
+
+        # ✅ SOLO imprimir comandos de encender / apagar (type="command")
+        if payload.get("type") == "command":
+            print(
+                f"{datetime.now()} 🎮 CMD enviado -> "
+                f"to={payload.get('to')} {payload.get('device')}[{payload.get('id')}] {payload.get('action')}"
+            )
 
     async def request_state(self, esp32_id: str):
         await self.send_json({"type": "get_state", "to": esp32_id})
@@ -153,7 +134,6 @@ def main(page: ft.Page):
 
     relay_switch = ft.Switch(label="ON / OFF", value=False)
 
-    # 💡 ICONO DE BOMBILLA (ESTADO REAL)
     bulb_icon = ft.Icon(
         name=ft.Icons.LIGHTBULB_OUTLINE,
         size=48,
