@@ -265,21 +265,6 @@ void sendState() {
   Serial.println(out);
 }
 
-// Ping periódico (JSON de tu protocolo)
-void sendPing() {
-  StaticJsonDocument<200> doc;
-  doc["type"] = "ping";
-  doc["from"] = ID_PLACA;
-  doc["ts"] = isoTimestampUTC();
-
-  String out;
-  serializeJson(doc, out);
-  webSocket.sendTXT(out);
-
-  Serial.print("[WS] -> ping: ");
-  Serial.println(out);
-}
-
 // -----------------------------------------------------------------------------
 // 📥 Mensajes entrantes (command / get_state / registered / pong)
 // -----------------------------------------------------------------------------
@@ -581,11 +566,4 @@ void loop() {
   }
 
   webSocket.loop();
-
-  // Keep-alive ping JSON
-  unsigned long now = millis();
-  if (now - lastPingMs >= PING_INTERVAL_MS) {
-    lastPingMs = now;
-    sendPing();
-  }
 }
