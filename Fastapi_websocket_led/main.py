@@ -193,7 +193,7 @@ async def keep_alive_task() -> None:
                 dead_esps.append(eid)
         
         for eid in dead_esps:
-            del esp32_connections[eid]
+            esp32_connections.pop(eid, None)
             print(f"{ts()} 🧹 Limpieza: ESP32 'zombi' eliminado ({eid})")
             await broadcast_to_frontends({"type": "esp32_offline", "id": eid})
 
