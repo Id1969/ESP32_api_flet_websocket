@@ -325,7 +325,13 @@ void handleIncomingMessage(const char *message) {
     return;
   }
 
-  // 4) Control: pong / registered
+  if (strcmp(type, "ping") == 0) {
+    // El servidor envía este ping para verificar salud.
+    // Al recibirlo, el socket se mantiene activo. No requiere respuesta
+    // obligatoria.
+    return;
+  }
+
   if (strcmp(type, "pong") == 0) {
     Serial.println("[WS] <- pong");
     return;
