@@ -103,6 +103,8 @@ class WebSocketClient:
 
     async def command_relay(self, esp32_id: str, action: str):
         if esp32_id:
+            now = datetime.now().strftime("%H:%M:%S")
+            print(f"{now} 🕹️  Enviando comando: {action.upper()} -> {esp32_id}")
             await self.send_json({
                 "type": "command",
                 "to": esp32_id,
@@ -131,6 +133,8 @@ def main(page: ft.Page):
     status_point = ft.Container(width=12, height=12, border_radius=6, bgcolor=ft.Colors.RED_500)
     status_text = ft.Text("Desconectado del servidor", size=14, italic=True)
     server_status_row = ft.Row([status_point, status_text], alignment=ft.MainAxisAlignment.CENTER)
+
+    client_ip_text = ft.Text("Tu IP: detectando...", size=12, color=ft.Colors.BLUE_200)
 
     esp32_dropdown = ft.Dropdown(
         label="Seleccionar ESP32", 
@@ -196,6 +200,8 @@ def main(page: ft.Page):
         if msg_type == "registered":
             status_point.bgcolor = ft.Colors.GREEN_500
             status_text.value = "✅ Servidor Online"
+            my_ip = data.get("ip", "desconocida")
+            client_ip_text.value = f"Tu IP: {my_ip}"
             page.update()
             return
 
@@ -247,6 +253,9 @@ def main(page: ft.Page):
             st = data.get("state")
             set_ui_state(True)
 
+            now = datetime.now().strftime("%H:%M:%S")
+            print(f"{now} 💡 Confirmación recibida: {from_id} es {st.upper()}")
+
             relay_switch.value = (st == "on")
             bulb_icon.name = ft.Icons.LIGHTBULB if st == "on" else ft.Icons.LIGHTBULB_OUTLINE
             bulb_icon.color = ft.Colors.AMBER_500 if st == "on" else ft.Colors.GREY_500
@@ -281,6 +290,7 @@ def main(page: ft.Page):
             [
                 title,
                 ws_info,
+                client_ip_text,
                 ft.Divider(),
                 server_status_row,
                 ft.Divider(),

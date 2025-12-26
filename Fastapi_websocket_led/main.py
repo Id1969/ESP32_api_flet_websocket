@@ -63,7 +63,8 @@ import uvicorn
 # 🕒 Timestamp ISO (UTC) tipo ESP32: 2025-12-22T18:01:33Z
 # --------------------------------------------------------------------------
 def ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Usamos la hora local del sistema para mayor claridad en los logs del usuario
+    return datetime.now().strftime("%H:%M:%S")
 
 
 # --------------------------------------------------------------------------
@@ -185,15 +186,16 @@ async def keep_alive_task() -> None:
                 del frontends[ws]
                 print(f"{ts()} 🧹 Limpieza: Frontend 'zombi' eliminado (peer={peer(ws)})")
 
-        # 2. Vigilar ESP32s
+        # 2. Vigilar ESP32s (Solo purga si el socket se rompe)
         dead_esps = []
         for eid, ws in list(esp32_connections.items()):
-            # Mandamos un ping real al ESP32
+            # Solo eliminamos si el envío falla físicamente
             if not await safe_send_json(ws, {"type": "ping"}):
                 dead_esps.append(eid)
         
         for eid in dead_esps:
             esp32_connections.pop(eid, None)
+            esp32_meta.pop(eid, None)   # También limpiamos sus metadatos
             print(f"{ts()} 🧹 Limpieza: ESP32 'zombi' eliminado ({eid})")
             await broadcast_to_frontends({"type": "esp32_offline", "id": eid})
 
@@ -254,7 +256,7 @@ async def websocket_endpoint(ws: WebSocket):
                 "last_seen": time.time()
             }
             print(f"{ts()} ✅ Frontend registrado. Total: {len(frontends)}")
-            await safe_send_json(ws, {"type": "registered", "role": "frontend"})
+            await safe_send_json(ws, {"type": "registered", "role": "frontend", "ip": peer(ws)})
             # Enviar lista actual (Snapshot inicial)
             await safe_send_json(ws, {"type": "esp32_list", "items": sorted(esp32_connections.keys())})
         
@@ -263,9 +265,12 @@ async def websocket_endpoint(ws: WebSocket):
             return
 
         # --- Bucle de Escucha de Mensajes ---
-            # Actualizar last_seen en cada mensaje recibido
+        while True:
+            # Actualizar last_seen en cada mensaje recibido (para el vigilante)
             if role == "frontend" and ws in frontends:
                 frontends[ws]["last_seen"] = time.time()
+            elif role == "esp32" and esp32_id:
+                esp32_meta[esp32_id]["last_seen"] = time.time()
 
             data = await ws.receive_json()
             m_type = data.get("type")
@@ -274,6 +279,11 @@ async def websocket_endpoint(ws: WebSocket):
             if role == "esp32":
                 if m_type == "state":
                     cache_state(data)
+                    device = data.get("device", "unknown")
+                    state = data.get("state", "unknown")
+                    # Recuperamos quién fue el último que mandó una orden a esta placa
+                    triggered_by = esp32_meta.get(esp32_id, {}).get("last_commander", "vía interruptor físico")
+                    print(f"{ts()} 📢 [ESTADO] {esp32_id} -> {device}: {state.upper()} (Sincronizado con: {triggered_by})")
                     await broadcast_to_frontends(data)
                 
                 # El ESP32 ya no envía pings según el nuevo modelo. 
@@ -283,6 +293,14 @@ async def websocket_endpoint(ws: WebSocket):
             elif role == "frontend":
                 if m_type == "command":
                     target_id = data.get("to")
+                    action = data.get("action", "unknown").upper()
+                    client_ip = peer(ws)
+                    print(f"{ts()} 🎮 [COMANDO] Desde: {client_ip} -> Para: {target_id} -> Acción: {action}")
+                    
+                    # Guardamos en los metadatos de la placa quién le está mandando la orden
+                    if target_id in esp32_meta:
+                        esp32_meta[target_id]["last_commander"] = client_ip
+                    
                     target_ws = esp32_connections.get(target_id)
                     if target_ws:
                         ok = await safe_send_json(target_ws, data)
@@ -306,9 +324,9 @@ async def websocket_endpoint(ws: WebSocket):
                             await safe_send_json(tw, {"type": "get_state"})
 
     except WebSocketDisconnect:
-        pass
+        print(f"{ts()} 🔌 Desconexión limpia (WebSocketDisconnect) role={role} id={esp32_id}")
     except Exception as e:
-        print(f"{ts()} ⚠ Error en WS principal: {e}")
+        print(f"{ts()} ⚠ Error en bucle WS: {e} role={role} id={esp32_id}")
     finally:
         # Limpieza al desconectar
         if role == "frontend":
