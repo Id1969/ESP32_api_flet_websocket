@@ -233,13 +233,8 @@ async def websocket_endpoint(ws: WebSocket):
                 await ws.close()
                 return
 
-            # Limpiar conexión previa si existía (evitar fantasmas)
-            if esp32_id in esp32_connections:
-                try:
-                    await esp32_connections[esp32_id].close()
-                except:
-                    pass
-            
+            # Simplemente actualizar el registro sin cerrar manualmente la anterior
+            # (FastAPI/Uvicorn ya gestionan el cierre de sockets huérfanos)
             esp32_connections[esp32_id] = ws
             esp32_meta[esp32_id] = {
                 "mac": init_msg.get("mac"),
