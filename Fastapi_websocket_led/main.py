@@ -99,7 +99,7 @@ app.add_middleware(
 
 esp32_connections: Dict[str, WebSocket] = {}
 esp32_meta: Dict[str, Dict[str, Any]] = {}
-frontends: Set[WebSocket] = set()
+frontends: Dict[WebSocket, Dict[str, Any]] = {}  # Ahora es un dict para guardar meta-data
 state_cache: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
 
 
@@ -108,10 +108,12 @@ state_cache: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
 # --------------------------------------------------------------------------
 @app.get("/")
 async def get_status():
+    frontend_ips = [info.get("ip", "unknown") for info in frontends.values()]
     return {
         "status": "online",
         "esp32_conectados": list(esp32_connections.keys()),
         "total_frontends": len(frontends),
+        "frontends_active_ips": frontend_ips,
         "cache_estados": len(state_cache),
         "timestamp": ts(),
     }
@@ -131,13 +133,14 @@ async def safe_send_json(ws: WebSocket, payload: Dict[str, Any]) -> bool:
 async def broadcast_to_frontends(payload: Dict[str, Any]) -> None:
     """Difunde a todos los frontends registrados. Si uno falla, se purga."""
     dead = []
-    for ws in list(frontends):
+    for ws in list(frontends.keys()):
         if not await safe_send_json(ws, payload):
             dead.append(ws)
 
     for ws in dead:
-        frontends.discard(ws)
-        print(f"{ts()} 🧹 Frontend eliminado (broadcast falló) peer={peer(ws)}")
+        if ws in frontends:
+            del frontends[ws]
+            print(f"{ts()} 🧹 Frontend eliminado (broadcast falló) peer={peer(ws)}")
 
 def cache_state(payload: Dict[str, Any]) -> None:
     """Guarda el último estado conocido por (esp32_id, device, channel)."""
@@ -163,17 +166,24 @@ async def keep_alive_task() -> None:
     """Tarea continua que barre conexiones muertas para liberar RAM y avisar al front."""
     while True:
         await asyncio.sleep(KEEP_ALIVE_SECONDS)
+        now = time.time()
         
-        # 1. Vigilar Frontends
+        # 1. Vigilar Frontends (Purga por fallo de comunicación o inactividad extrema de 24h)
         dead_fronts = []
-        for ws in list(frontends):
-            # Enviamos ping invisible. Si falla, al hoyo.
+        for ws, info in list(frontends.items()):
+            # Solo purgamos por inactividad si pasan 24 horas sin señales (por seguridad extrema)
+            if now - info.get("last_seen", 0) > 86400:
+                dead_fronts.append(ws)
+                continue
+
+            # El intento de envío detectará si la pestaña se cerró
             if not await safe_send_json(ws, {"type": "ping"}):
                 dead_fronts.append(ws)
         
         for ws in dead_fronts:
-            frontends.discard(ws)
-            print(f"{ts()} 🧹 Limpieza: Frontend 'zombi' eliminado (peer={peer(ws)})")
+            if ws in frontends:
+                del frontends[ws]
+                print(f"{ts()} 🧹 Limpieza: Frontend 'zombi' eliminado (peer={peer(ws)})")
 
         # 2. Vigilar ESP32s
         dead_esps = []
@@ -244,7 +254,10 @@ async def websocket_endpoint(ws: WebSocket):
 
         # --- Lógica de Registro Frontend ---
         elif role == "frontend":
-            frontends.add(ws)
+            frontends[ws] = {
+                "ip": peer(ws),
+                "last_seen": time.time()
+            }
             print(f"{ts()} ✅ Frontend registrado. Total: {len(frontends)}")
             await safe_send_json(ws, {"type": "registered", "role": "frontend"})
             # Enviar lista actual (Snapshot inicial)
@@ -255,7 +268,10 @@ async def websocket_endpoint(ws: WebSocket):
             return
 
         # --- Bucle de Escucha de Mensajes ---
-        while True:
+            # Actualizar last_seen en cada mensaje recibido
+            if role == "frontend" and ws in frontends:
+                frontends[ws]["last_seen"] = time.time()
+
             data = await ws.receive_json()
             m_type = data.get("type")
 
@@ -301,7 +317,8 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         # Limpieza al desconectar
         if role == "frontend":
-            frontends.discard(ws)
+            if ws in frontends:
+                del frontends[ws]
             print(f"{ts()} 🧹 Frontend desconectado")
         
         if role == "esp32" and esp32_id:
